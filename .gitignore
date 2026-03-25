@@ -1,0 +1,6 @@
+node_modules/
+data/vlingo.db
+data/materials/*.pdf
+data/materials/*.tmp
+*.log
+.env

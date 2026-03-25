@@ -1,0 +1,30 @@
+{
+  "name": "vlingo-api",
+  "version": "1.0.0",
+  "description": "VLINGO AI Backend - English learning assistant powered by local LLM via Ollama",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "ingest": "node scripts/ingest.js",
+    "pull-model": "ollama pull llama3.2:3b",
+    "setup": "npm install && npm run pull-model"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "better-sqlite3": "^9.4.3",
+    "ollama": "^0.5.0",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "uuid": "^9.0.0",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
