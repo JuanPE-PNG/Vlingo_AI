@@ -12,10 +12,7 @@ const MODEL  = process.env.OLLAMA_MODEL          || 'llama3.2:3b';
 const TEMP   = parseFloat(process.env.MODEL_TEMPERATURE) || 0.7;
 const TOKENS = parseInt(process.env.MODEL_MAX_TOKENS)    || 256;
 
-// LangSmith se activa automáticamente con:
-// LANGCHAIN_TRACING_V2=true, LANGCHAIN_API_KEY, LANGCHAIN_PROJECT en .env
-
-// ─── Modelo ───────────────────────────────────────────────────────────────────
+// Modelo
 const llm = new ChatOllama({
   baseUrl:     process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
   model:       MODEL,
@@ -28,7 +25,7 @@ const llm = new ChatOllama({
   lowVram:     false,
 });
 
-// ─── System prompt ────────────────────────────────────────────────────────────
+// System prompt
 const SYSTEM = `You are VLINGO, a friendly English teacher for Spanish speakers.
 
 MAIN BEHAVIOR:
@@ -120,30 +117,15 @@ If the student asks something unrelated, redirect the conversation to English pr
 
 SCOPE: English tutor only. Redirect off-topic questions to English practice.`;
 
-// ─── Prompt template ──────────────────────────────────────────────────────────
+// Prompt template
 const prompt = ChatPromptTemplate.fromMessages([
   ['system', SYSTEM],
   new MessagesPlaceholder('history'),
   ['human', '{input}'],
 ]);
 
-// ─── Cadena base ──────────────────────────────────────────────────────────────
+// Cadena base
 const chain = prompt.pipe(llm).pipe(new StringOutputParser());
-
-// ─── Sliding Window Memory ────────────────────────────────────────────────────
-//
-// SQLite es la fuente de verdad. En cada llamada, reconstruimos la memoria
-// de LangChain desde el historial que viene de SQLite, aplicando la ventana
-// deslizante de WINDOW_SIZE mensajes.
-//
-// Flujo:
-//   SQLite [msg1..msgN] → tomar últimos WINDOW_SIZE-1 → cargar en RAM
-//   → LangChain invoca con el mensaje actual → agrega respuesta a RAM
-//
-// Cuando llega el mensaje 11 con ventana 10:
-//   SQLite tiene [1..10], se cargan [2..10] en RAM (9 mensajes),
-//   LangChain agrega el 11 durante el invoke → RAM queda [2..11] (10 mensajes)
-//   En la siguiente llamada SQLite ya tiene [1..11], se cargan [3..11] → etc.
 
 const WINDOW_SIZE = parseInt(process.env.CONTEXT_WINDOW) || 10;
 
@@ -152,19 +134,15 @@ const sessionStores = new Map();
 
 /**
  * Reconstruye la memoria de una sesión desde el historial de SQLite.
- * Se llama en CADA petición — SQLite siempre manda, la RAM es descartable.
+ * Se llama en CADA petición
  *
  * @param {string} sessionId
  * @param {Array}  dbHistory  - mensajes de SQLite [{role, content}]
- *                              NO incluye el mensaje actual (ya lo maneja LangChain)
+ *                              NO incluye el mensaje actual, ya lo maneja LangChain
  */
 async function syncMemoryFromDB(sessionId, dbHistory) {
-  // Crear siempre una instancia limpia — SQLite es la fuente de verdad
   const history = new InMemoryChatMessageHistory();
 
-  // Aplicar ventana: tomar los últimos (WINDOW_SIZE - 1) del historial previo
-  // El -1 es porque LangChain agregará el mensaje actual durante el invoke,
-  // completando la ventana de WINDOW_SIZE mensajes totales en contexto.
   const windowed = dbHistory.slice(-(WINDOW_SIZE - 1));
 
   for (const m of windowed) {
@@ -186,7 +164,6 @@ function getSessionHistory(sessionId) {
   return sessionStores.get(sessionId);
 }
 
-// ─── Cadena con memoria ───────────────────────────────────────────────────────
 const chainWithMemory = new RunnableWithMessageHistory({
   runnable:           chain,
   getMessageHistory:  getSessionHistory,
@@ -194,7 +171,6 @@ const chainWithMemory = new RunnableWithMessageHistory({
   historyMessagesKey: 'history',
 });
 
-// ─── Verificación de Ollama ───────────────────────────────────────────────────
 export async function verifyOllama() {
   try {
     await llm.invoke([new HumanMessage('hi')]);
@@ -205,12 +181,11 @@ export async function verifyOllama() {
   }
 }
 
-// ─── generateResponse ─────────────────────────────────────────────────────────
 /**
  * @param {string} currentMessage  - el mensaje actual del usuario (solo texto)
- * @param {Array}  dbHistory       - historial PREVIO de SQLite [{role,content}]
+ * @param {Array}  dbHistory       - historial PREVIO de SQLite
  *                                   SIN incluir el mensaje actual
- * @param {Object} options         - { level, context, userName, sessionId }
+ * @param {Object} options
  */
 export async function generateResponse(currentMessage, dbHistory, options = {}) {
   const {
@@ -220,7 +195,7 @@ export async function generateResponse(currentMessage, dbHistory, options = {}) 
     sessionId = 'default',
   } = options;
 
-  // Sincronizar RAM con SQLite antes de cada llamada
+  // Sincronizar RAM con SQLite
   await syncMemoryFromDB(sessionId, dbHistory);
 
   const contextBlock = context ? `RELEVANT LEARNING MATERIAL:\n${context}` : '';
@@ -242,7 +217,6 @@ export async function generateResponse(currentMessage, dbHistory, options = {}) 
   return response;
 }
 
-// ─── generateResponseStream ───────────────────────────────────────────────────
 /**
  * @param {string}   currentMessage
  * @param {Array}    dbHistory       - historial PREVIO sin el mensaje actual
@@ -284,7 +258,6 @@ export async function generateResponseStream(currentMessage, dbHistory, options 
   return fullResponse;
 }
 
-// ─── evaluateText ─────────────────────────────────────────────────────────────
 export async function evaluateText(studentText, exerciseContext, level = 'B1') {
   const evalPrompt = ChatPromptTemplate.fromMessages([
     ['system', `You are an English teacher. Evaluate the student's writing and reply ONLY with valid JSON, no extra text.
@@ -319,8 +292,6 @@ JSON format:
     };
   }
 }
-
-// ─── Utilidades ───────────────────────────────────────────────────────────────
 
 export function clearSessionMemory(sessionId) {
   sessionStores.delete(sessionId);

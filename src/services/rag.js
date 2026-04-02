@@ -1,14 +1,3 @@
-/**
- * Sistema RAG (Retrieval-Augmented Generation) simplificado
- *
- * En lugar de usar vectores/embeddings (que requieren más recursos),
- * usamos búsqueda por palabras clave + TF-IDF simplificado.
- * Esto es suficiente para un tutor de inglés y corre sin GPU extra.
- *
- * Cuando entregues el material pedagógico, el script ingest.js lo
- * procesa y guarda en la tabla `materials` de SQLite.
- */
-
 import { getDB } from './database.js';
 
 /**
@@ -21,14 +10,11 @@ import { getDB } from './database.js';
 export function retrieveContext(query, level = 'A1', topK = 3) {
   const db = getDB();
 
-  // Extraer palabras clave de la query (remover stopwords comunes)
   const keywords = extractKeywords(query);
   if (keywords.length === 0) return '';
 
-  // Buscar materiales que coincidan con keywords o nivel
   const levelGroup = getLevelGroup(level);
 
-  // Búsqueda por keywords en el contenido y keywords indexadas
   const placeholders = keywords.map(() => '?').join(', ');
   const keywordConditions = keywords.map(() => `(content LIKE ? OR keywords LIKE ?)`).join(' OR ');
   const keywordParams = keywords.flatMap(k => [`%${k}%`, `%${k}%`]);
@@ -36,7 +22,6 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
   let results = [];
 
   try {
-    // Primera pasada: buscar por nivel exacto + keywords
     const stmt = db.prepare(`
       SELECT content, keywords, level, category,
              (
@@ -61,7 +46,6 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
 
     results = stmt.all(...params);
   } catch {
-    // Fallback: búsqueda simple si la query falla
     try {
       const simple = db.prepare(`
         SELECT content, keywords, level, category
@@ -78,7 +62,6 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
 
   if (results.length === 0) return '';
 
-  // Tomar los topK más relevantes y combinar
   const top = results.slice(0, topK);
   const context = top
     .map(r => `[${r.level || level} - ${r.category || 'general'}]\n${r.content}`)
@@ -87,9 +70,6 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
   return context;
 }
 
-/**
- * Extrae palabras clave de un texto, ignorando stopwords
- */
 function extractKeywords(text) {
   const stopwords = new Set([
     'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -111,9 +91,7 @@ function extractKeywords(text) {
     .slice(0, 8); // máximo 8 keywords
 }
 
-/**
- * Retorna el grupo de niveles adecuado para no ser demasiado restrictivo
- */
+
 function getLevelGroup(level) {
   const groups = {
     'A1': ['A1', 'A2'],
@@ -140,7 +118,6 @@ export function chunkText(text, chunkSize = 800, overlap = 100) {
   for (const sentence of sentences) {
     if (current.length + sentence.length > chunkSize && current.length > 0) {
       chunks.push(current.trim());
-      // Overlap: empezar el nuevo chunk con las últimas palabras del anterior
       const words = current.split(' ');
       current = words.slice(-Math.floor(overlap / 6)).join(' ') + ' ' + sentence;
     } else {
@@ -152,9 +129,6 @@ export function chunkText(text, chunkSize = 800, overlap = 100) {
   return chunks;
 }
 
-/**
- * Extrae keywords automáticamente de un fragmento para indexación
- */
 export function extractKeywordsFromChunk(text) {
   const freq = {};
   const words = text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/);

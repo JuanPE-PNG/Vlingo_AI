@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 
 app.use(cors({
-  origin: '*', // ToDO: Restringir en producción.
+  origin: '*', // TODO: Restringir en producción.
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID'],
 }));

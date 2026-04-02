@@ -4,14 +4,6 @@ import { getDB } from '../services/database.js';
 
 const router = Router();
 
-// ─── Usuarios ─────────────────────────────────────────────────────────────────
-
-/**
- * POST /api/progress/user
- * Crea o actualiza un usuario
- *
- * Body: { name, email?, level? }
- */
 router.post('/user', (req, res) => {
   const { name, email, level = 'A1' } = req.body;
 
@@ -24,7 +16,6 @@ router.post('/user', (req, res) => {
 
   const db = getDB();
 
-  // Si viene email, buscar usuario existente
   if (email) {
     const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
     if (existing) {
@@ -108,14 +99,7 @@ router.put('/user/:userId', (req, res) => {
   res.json({ user: updated });
 });
 
-// ─── Progreso por lección ─────────────────────────────────────────────────────
 
-/**
- * POST /api/progress/lesson
- * Actualiza el progreso del usuario en una lección
- *
- * Body: { userId, lessonId, status, score }
- */
 router.post('/lesson', (req, res) => {
   const { userId, lessonId, status, score } = req.body;
 
@@ -151,7 +135,6 @@ router.post('/lesson', (req, res) => {
     `).run(userId, lessonId, status, score || 0, status);
   }
 
-  // Si completó con buen score, sugerir subir de nivel
   let levelUp = null;
   if (status === 'completed' && score >= 80) {
     const user = db.prepare('SELECT level FROM users WHERE id = ?').get(userId);
@@ -179,10 +162,6 @@ router.post('/lesson', (req, res) => {
   res.json({ progress, levelUp });
 });
 
-/**
- * GET /api/progress/:userId/lessons
- * Obtiene el progreso de todas las lecciones de un usuario
- */
 router.get('/:userId/lessons', (req, res) => {
   const db = getDB();
   const progress = db.prepare(`

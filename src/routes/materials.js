@@ -7,7 +7,6 @@ import { chunkText, extractKeywordsFromChunk } from '../services/rag.js';
 
 const router = Router();
 
-// Configurar multer para subir archivos
 const upload = multer({
   dest: './data/materials/',
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB máximo
@@ -22,15 +21,6 @@ const upload = multer({
   },
 });
 
-/**
- * POST /api/materials/ingest
- * Sube e ingesta un archivo de material pedagógico
- *
- * Form data:
- *   file     - archivo (.txt, .pdf, .md, .json)
- *   level    - nivel al que aplica (A1, A2, B1, B2)
- *   category - categoría (grammar, vocabulary, speaking, listening, culture)
- */
 router.post('/ingest', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Se requiere un archivo' });
 
@@ -46,7 +36,6 @@ router.post('/ingest', upload.single('file'), async (req, res) => {
       text = fs.readFileSync(filePath, 'utf-8');
 
     } else if (ext === '.pdf') {
-      // Importación dinámica para pdf-parse
       const pdfParse = (await import('pdf-parse')).default;
       const buffer = fs.readFileSync(filePath);
       const data = await pdfParse(buffer);
@@ -54,7 +43,6 @@ router.post('/ingest', upload.single('file'), async (req, res) => {
 
     } else if (ext === '.json') {
       const json = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      // Acepta arrays de strings o objetos con campo "content" o "text"
       if (Array.isArray(json)) {
         text = json.map(item =>
           typeof item === 'string' ? item : (item.content || item.text || JSON.stringify(item))
@@ -106,12 +94,6 @@ router.post('/ingest', upload.single('file'), async (req, res) => {
   }
 });
 
-/**
- * POST /api/materials/ingest-text
- * Ingesta texto plano directamente (sin archivo)
- *
- * Body: { text, filename, level, category }
- */
 router.post('/ingest-text', (req, res) => {
   const { text, filename = 'manual_entry', level = 'A1', category = 'general' } = req.body;
 
@@ -140,10 +122,6 @@ router.post('/ingest-text', (req, res) => {
   });
 });
 
-/**
- * GET /api/materials
- * Lista los materiales ingresados
- */
 router.get('/', (req, res) => {
   const db = getDB();
   const materials = db.prepare(`
@@ -158,10 +136,6 @@ router.get('/', (req, res) => {
   res.json({ materials });
 });
 
-/**
- * DELETE /api/materials/:filename
- * Elimina todos los chunks de un archivo
- */
 router.delete('/:filename', (req, res) => {
   const db = getDB();
   const result = db.prepare('DELETE FROM materials WHERE filename = ?').run(req.params.filename);

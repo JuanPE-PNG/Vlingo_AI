@@ -82,7 +82,7 @@ router.post('/message', async (req, res) => {
         sessionId: session.id,
         message:   response,
         userLevel: user.level,
-        historySize: dbHistory.length,  // útil para debug
+        historySize: dbHistory.length,
       });
     }
   } catch (err) {

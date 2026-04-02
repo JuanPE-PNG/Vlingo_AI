@@ -4,7 +4,6 @@ import fs from 'fs';
 
 const DB_PATH = process.env.DB_PATH || './data/vlingo.db';
 
-// Asegurar que el directorio existe
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
@@ -18,7 +17,6 @@ export function getDB() {
 export async function initDatabase() {
   db = new Database(DB_PATH);
 
-  // Optimizaciones de SQLite para mejor rendimiento
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
@@ -99,7 +97,6 @@ export async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_materials_category ON materials(category);
   `);
 
-  // Insertar lecciones de ejemplo si no existen
   seedLessons();
 
   return db;
