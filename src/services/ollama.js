@@ -1,197 +1,347 @@
-import { Ollama } from 'ollama';
- 
-const ollama = new Ollama({
-  host: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+import { ChatOllama } from '@langchain/ollama';
+import {
+  ChatPromptTemplate,
+  MessagesPlaceholder,
+} from '@langchain/core/prompts';
+import { RunnableWithMessageHistory } from '@langchain/core/runnables';
+import { InMemoryChatMessageHistory } from '@langchain/core/chat_history';
+import { StringOutputParser } from '@langchain/core/output_parsers';
+import { HumanMessage, AIMessage } from '@langchain/core/messages';
+
+const MODEL  = process.env.OLLAMA_MODEL          || 'llama3.2:3b';
+const TEMP   = parseFloat(process.env.MODEL_TEMPERATURE) || 0.7;
+const TOKENS = parseInt(process.env.MODEL_MAX_TOKENS)    || 256;
+
+// LangSmith se activa automáticamente con:
+// LANGCHAIN_TRACING_V2=true, LANGCHAIN_API_KEY, LANGCHAIN_PROJECT en .env
+
+// ─── Modelo ───────────────────────────────────────────────────────────────────
+const llm = new ChatOllama({
+  baseUrl:     process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+  model:       MODEL,
+  temperature: TEMP,
+  numPredict:  TOKENS,
+  numGpu:      99,
+  numThread:   4,
+  numCtx:      1024,
+  numBatch:    512,
+  lowVram:     false,
 });
- 
-const MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
-const TEMPERATURE = parseFloat(process.env.MODEL_TEMPERATURE) || 0.7;
-const MAX_TOKENS = parseInt(process.env.MODEL_MAX_TOKENS) || 512;
- 
-const BASE_SYSTEM_PROMPT = `You are VLINGO, a friendly English learning assistant for Spanish speakers.
- 
-LANGUAGE RULES — follow these exactly, no exceptions:
-1. Your replies are ALWAYS in English, even if the student writes in Spanish.
-2. The ONLY Spanish allowed is a brief clarification in parentheses when introducing a brand-new word the student has never seen. Example: "This is called a 'greeting' (saludo)."
-3. If the student asks you something in Spanish (like "ayúdame a decir X"), understand their request but answer in English.
-4. If the student asks you to translate a phrase FOR them, do NOT just give the translation. Instead, teach it: break it down word by word in English, then let them try.
-5. Never switch fully to Spanish no matter what the student says.
- 
-HOW TO HANDLE "help me say X in English" requests:
-- Acknowledge briefly in English: "Sure! Let's build that sentence."
-- Break it into parts with simple English explanations.
-- Give the full English phrase at the end.
-- Ask them to repeat or use it in a new sentence.
-Example — student says "ayúdame a decir Me llamo Juan":
-  "Sure! 'Me llamo' means you are introducing your name.
-   In English we say: 'My name is Juan.'
-   → 'My' = possession, 'name' = nombre, 'is' = es.
-   Now you try: how would you introduce your friend Carlos?"
- 
-CORRECTION STYLE:
-When a student makes a grammar mistake, correct like this:
-"Good try! We'd say '[correct form]' — [one-line reason]. [Continue conversation]."
-Never make them feel bad. Keep corrections short.
- 
+
+// ─── System prompt ────────────────────────────────────────────────────────────
+const SYSTEM = `You are VLINGO, a friendly English teacher for Spanish speakers.
+
+MAIN BEHAVIOR:
+You are an English teacher who normally speaks Spanish to explain things,
+but always writes corrections in English.
+
+LANGUAGE RULES — follow exactly:
+
+1. Default behavior:
+   - You speak in Spanish.
+   - Corrections are ALWAYS written in English.
+
+2. If the student writes ONLY in English:
+   - You respond ONLY in English.
+   - You correct in English.
+   - Do not switch to Spanish.
+
+3. If the student writes in Spanish or mixed Spanish:
+   - You respond in Spanish.
+   - Corrections must be written in English.
+
+4. If the student asks for help to say something in English (examples: 
+   "how do I say...", "ayúdame a decir...", "como digo...", "help me say..."):
+   - This is NOT a correction.
+   - Only the requested phrase should be written in English.
+   - The rest of the explanation must follow the language rules above.
+   - Treat it as teaching, not correcting.
+
+TEACHING STYLE:
+- You are a patient teacher.
+- You correct mistakes gently.
+- Keep explanations short.
+- Encourage the student to try again.
+- Do not write long paragraphs.
+- Be friendly and supportive.
+
+CORRECTION FORMAT:
+Only when the student makes a mistake, use this structure:
+"Buen intento. En inglés diríamos: '[correct sentence]'. [Short reason]."
+
+If you are speaking fully in English:
+"Good try. We'd say: '[correct sentence]'. [Short reason]."
+
+TRANSLATION / HELP REQUESTS:
+When the student asks how to say something:
+1. Brief introduction.
+2. Break sentence into parts.
+3. Show full sentence in English.
+4. Ask student to try another sentence.
+
+Example:
+Student: "ayúdame a decir quiero comprar comida"
+You:
+"Vamos a construir la frase.
+'I' = yo
+'want' = quiero
+'to buy' = comprar
+'food' = comida
+La frase completa es: 'I want to buy food'.
+Ahora intenta decir: Quiero comprar agua."
+
+STUDENT INFO:
+Name: {userName}
+Level: {level}
+
 LEVELS:
-- A1/A2: very simple words, present tense only, short sentences
-- B1/B2: varied vocabulary, past/future tenses, common idioms
-- Always pitch your English slightly above the student's level (i+1 principle)
- 
+A1/A2:
+- Simple vocabulary
+- Present tense
+- Short sentences
+
+B1/B2:
+- More vocabulary
+- Past and future
+- Opinions and explanations
+
+Always use English slightly above the student's level (i+1).
+
 RESPONSE LENGTH:
-- Chat / conversation: 2-4 sentences max
-- Explanations: up to 8 sentences, structured clearly
+- Normal chat: 2–4 sentences
+- Explanations: max 8 sentences
 - Never write long walls of text
- 
+
 SCOPE:
-You are an English tutor only. If asked about unrelated topics, redirect politely to English practice.`;
+You are only an English tutor.
+If the student asks something unrelated, redirect the conversation to English practice.
+
+{context}
+
+SCOPE: English tutor only. Redirect off-topic questions to English practice.`;
+
+// ─── Prompt template ──────────────────────────────────────────────────────────
+const prompt = ChatPromptTemplate.fromMessages([
+  ['system', SYSTEM],
+  new MessagesPlaceholder('history'),
+  ['human', '{input}'],
+]);
+
+// ─── Cadena base ──────────────────────────────────────────────────────────────
+const chain = prompt.pipe(llm).pipe(new StringOutputParser());
+
+// ─── Sliding Window Memory ────────────────────────────────────────────────────
+//
+// SQLite es la fuente de verdad. En cada llamada, reconstruimos la memoria
+// de LangChain desde el historial que viene de SQLite, aplicando la ventana
+// deslizante de WINDOW_SIZE mensajes.
+//
+// Flujo:
+//   SQLite [msg1..msgN] → tomar últimos WINDOW_SIZE-1 → cargar en RAM
+//   → LangChain invoca con el mensaje actual → agrega respuesta a RAM
+//
+// Cuando llega el mensaje 11 con ventana 10:
+//   SQLite tiene [1..10], se cargan [2..10] en RAM (9 mensajes),
+//   LangChain agrega el 11 durante el invoke → RAM queda [2..11] (10 mensajes)
+//   En la siguiente llamada SQLite ya tiene [1..11], se cargan [3..11] → etc.
+
+const WINDOW_SIZE = parseInt(process.env.CONTEXT_WINDOW) || 10;
+
+// Registro global: sessionId → InMemoryChatMessageHistory
+const sessionStores = new Map();
 
 /**
- * Verifica el modelo que se está usando está disponible en Ollama, especificado en el .env
- * @returns {boolean} true si el modelo está disponible, false en caso contrario
+ * Reconstruye la memoria de una sesión desde el historial de SQLite.
+ * Se llama en CADA petición — SQLite siempre manda, la RAM es descartable.
+ *
+ * @param {string} sessionId
+ * @param {Array}  dbHistory  - mensajes de SQLite [{role, content}]
+ *                              NO incluye el mensaje actual (ya lo maneja LangChain)
  */
+async function syncMemoryFromDB(sessionId, dbHistory) {
+  // Crear siempre una instancia limpia — SQLite es la fuente de verdad
+  const history = new InMemoryChatMessageHistory();
 
+  // Aplicar ventana: tomar los últimos (WINDOW_SIZE - 1) del historial previo
+  // El -1 es porque LangChain agregará el mensaje actual durante el invoke,
+  // completando la ventana de WINDOW_SIZE mensajes totales en contexto.
+  const windowed = dbHistory.slice(-(WINDOW_SIZE - 1));
+
+  for (const m of windowed) {
+    if (m.role === 'user') {
+      await history.addMessage(new HumanMessage(m.content));
+    } else if (m.role === 'assistant') {
+      await history.addMessage(new AIMessage(m.content));
+    }
+  }
+
+  sessionStores.set(sessionId, history);
+  return history;
+}
+
+function getSessionHistory(sessionId) {
+  if (!sessionStores.has(sessionId)) {
+    sessionStores.set(sessionId, new InMemoryChatMessageHistory());
+  }
+  return sessionStores.get(sessionId);
+}
+
+// ─── Cadena con memoria ───────────────────────────────────────────────────────
+const chainWithMemory = new RunnableWithMessageHistory({
+  runnable:           chain,
+  getMessageHistory:  getSessionHistory,
+  inputMessagesKey:   'input',
+  historyMessagesKey: 'history',
+});
+
+// ─── Verificación de Ollama ───────────────────────────────────────────────────
 export async function verifyOllama() {
   try {
-    const models = await ollama.list();
-    const available = models.models.map(m => m.name);
-    const modelFound = available.some(name =>
-      name.startsWith(MODEL.split(':')[0])
-    );
- 
-    if (!modelFound) {
-      console.warn(`⚠️  Modelo "${MODEL}" no encontrado.`);
-      console.warn(`   Modelos disponibles: ${available.join(', ') || 'ninguno'}`);
-      console.warn(`   Ejecuta: ollama pull ${MODEL}`);
-      return false;
-    }
+    await llm.invoke([new HumanMessage('hi')]);
     return true;
   } catch (err) {
     console.error('Ollama no responde:', err.message);
     return false;
   }
 }
- 
+
+// ─── generateResponse ─────────────────────────────────────────────────────────
 /**
- * Genera una respuesta del asistente de forma completa, evitando el streaming.
- * @param {Array} messages - Historial de mensajes [{role, content}]
- * @param {Object} options - level, context (material pedagógico), userName
- * @returns {string} Respuesta del modelo
+ * @param {string} currentMessage  - el mensaje actual del usuario (solo texto)
+ * @param {Array}  dbHistory       - historial PREVIO de SQLite [{role,content}]
+ *                                   SIN incluir el mensaje actual
+ * @param {Object} options         - { level, context, userName, sessionId }
  */
+export async function generateResponse(currentMessage, dbHistory, options = {}) {
+  const {
+    level     = 'A1',
+    context   = '',
+    userName  = 'Student',
+    sessionId = 'default',
+  } = options;
 
-export async function generateResponse(messages, options = {}) {
-  const { level = 'A1', context = '', userName = 'estudiante' } = options;
- 
+  // Sincronizar RAM con SQLite antes de cada llamada
+  await syncMemoryFromDB(sessionId, dbHistory);
 
-  let systemPrompt = BASE_SYSTEM_PROMPT;
-  systemPrompt += `\n\nSTUDENT INFO:\n- Name: ${userName}\n- Current level: ${level}`;
- 
-  if (context) {
-    systemPrompt += `\n\nRELEVANT LEARNING MATERIAL (use this to guide your response):\n${context}`;
-  }
- 
-  const response = await ollama.chat({
-    model: MODEL,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ],
-    options: {
-      temperature: TEMPERATURE,
-      num_predict: MAX_TOKENS,
-      num_gpu: 99,        // Todas las capas en GPU
-      num_thread: 4,      // Threads CPU
-      num_ctx: 1024,      // Contexto
-      num_batch: 512,     // Tamaño de batch para el prompt — acelera el "time to first token"
-      low_vram: false,    // uso de la vram, false = usar toda la VRAM disponible sin restricciones
+  const contextBlock = context ? `RELEVANT LEARNING MATERIAL:\n${context}` : '';
+
+  const response = await chainWithMemory.invoke(
+    {
+      input:    currentMessage,
+      userName,
+      level,
+      context:  contextBlock,
     },
-  });
- 
-  return response.message.content;
+    {
+      configurable: { sessionId },
+      metadata:     { userName, level, sessionId },
+      tags:         ['vlingo', 'chat', level],
+    }
+  );
+
+  return response;
 }
- 
+
+// ─── generateResponseStream ───────────────────────────────────────────────────
 /**
- * Genera respuesta con streaming (para UX más fluida en la app)
- * La app móvil puede mostrar el texto mientras se genera
- * @param {Array} messages
- * @param {Object} options
- * @param {Function} onChunk - callback(chunk: string) por cada fragmento
+ * @param {string}   currentMessage
+ * @param {Array}    dbHistory       - historial PREVIO sin el mensaje actual
+ * @param {Object}   options
+ * @param {Function} onChunk
  */
-export async function generateResponseStream(messages, options = {}, onChunk) {
-  const { level = 'A1', context = '', userName = 'estudiante' } = options;
- 
-  let systemPrompt = BASE_SYSTEM_PROMPT;
-  systemPrompt += `\n\nSTUDENT INFO:\n- Name: ${userName}\n- Current level: ${level}`;
- 
-  if (context) {
-    systemPrompt += `\n\nRELEVANT LEARNING MATERIAL:\n${context}`;
-  }
- 
-  const stream = await ollama.chat({
-    model: MODEL,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ],
-    stream: true,
-    options: {
-      temperature: TEMPERATURE,
-      num_predict: MAX_TOKENS,
-      num_gpu: 99,
-      num_thread: 4,
-      num_ctx: 1024,
-      num_batch: 512,
-      low_vram: false,
+export async function generateResponseStream(currentMessage, dbHistory, options = {}, onChunk) {
+  const {
+    level     = 'A1',
+    context   = '',
+    userName  = 'Student',
+    sessionId = 'default',
+  } = options;
+
+  await syncMemoryFromDB(sessionId, dbHistory);
+
+  const contextBlock = context ? `RELEVANT LEARNING MATERIAL:\n${context}` : '';
+
+  const stream = await chainWithMemory.stream(
+    {
+      input:    currentMessage,
+      userName,
+      level,
+      context:  contextBlock,
     },
-  });
- 
+    {
+      configurable: { sessionId },
+      metadata:     { userName, level, sessionId },
+      tags:         ['vlingo', 'stream', level],
+    }
+  );
+
   let fullResponse = '';
   for await (const chunk of stream) {
-    const text = chunk.message.content;
-    fullResponse += text;
-    if (onChunk) onChunk(text);
+    fullResponse += chunk;
+    if (onChunk) onChunk(chunk);
   }
- 
+
   return fullResponse;
 }
- 
-/**
- * Evalúa la pronunciación/gramática de una frase dada
- */
-export async function evaluateText(studentText, expectedContext, level = 'B1') {
-  const prompt = `You are an English teacher evaluating a student's writing.
-Level: ${level}
- 
-The student wrote: "${studentText}"
-Context/Exercise: ${expectedContext}
- 
-Evaluate briefly (JSON format only, no extra text):
-{
+
+// ─── evaluateText ─────────────────────────────────────────────────────────────
+export async function evaluateText(studentText, exerciseContext, level = 'B1') {
+  const evalPrompt = ChatPromptTemplate.fromMessages([
+    ['system', `You are an English teacher. Evaluate the student's writing and reply ONLY with valid JSON, no extra text.
+JSON format:
+{{
   "score": <0-100>,
-  "grammar_errors": ["error1", "error2"],
-  "corrections": ["correction1"],
-  "positive": "what they did well",
-  "tip": "one actionable improvement tip in Spanish"
-}`;
- 
-  const response = await ollama.chat({
-    model: MODEL,
-    messages: [{ role: 'user', content: prompt }],
-    options: { temperature: 0.3, num_predict: 300 },
-  });
- 
+  "grammar_errors": ["error description"],
+  "corrections": ["corrected sentence"],
+  "positive": "what they did well (in English)",
+  "tip": "one improvement tip in Spanish"
+}}`],
+    ['human', `Level: {level}\nExercise context: {exerciseContext}\nStudent wrote: "{studentText}"`],
+  ]);
+
+  const evalChain = evalPrompt.pipe(llm).pipe(new StringOutputParser());
+
+  const raw = await evalChain.invoke(
+    { level, exerciseContext, studentText },
+    { tags: ['vlingo', 'evaluate'] }
+  );
+
   try {
-    const jsonMatch = response.message.content.match(/\{[\s\S]*\}/);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
     return JSON.parse(jsonMatch[0]);
   } catch {
     return {
-      score: 70,
+      score:          70,
       grammar_errors: [],
-      corrections: [],
-      positive: 'Good effort!',
-      tip: 'Continúa practicando.',
+      corrections:    [],
+      positive:       'Good effort!',
+      tip:            'Continua practicando.',
     };
   }
 }
- 
-export { ollama, MODEL };
+
+// ─── Utilidades ───────────────────────────────────────────────────────────────
+
+export function clearSessionMemory(sessionId) {
+  sessionStores.delete(sessionId);
+}
+
+export async function getSessionStats(sessionId) {
+  const history  = getSessionHistory(sessionId);
+  const messages = await history.getMessages();
+  return {
+    sessionId,
+    messageCount: messages.length,
+    windowSize:   WINDOW_SIZE,
+    messages:     messages.map(m => ({
+      role:    m._getType(),
+      preview: m.content.slice(0, 80) + (m.content.length > 80 ? '...' : ''),
+    })),
+  };
+}
+
+export function activeSessionCount() {
+  return sessionStores.size;
+}
+
+export { MODEL };

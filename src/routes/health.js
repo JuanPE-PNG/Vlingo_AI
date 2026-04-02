@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ollama, MODEL } from '../services/ollama.js';
+import { verifyOllama, MODEL, activeSessionCount, getSessionStats } from '../services/ollama.js';
 
 const router = Router();
 
@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
   };
 
   try {
-    const models = await ollama.list();
+    const models = await verifyOllama();
     const modelLoaded = models.models.some(m => m.name.startsWith(MODEL.split(':')[0]));
     status.ollama = modelLoaded ? 'ready' : 'model_not_found';
     status.available_models = models.models.map(m => m.name);
@@ -28,6 +28,11 @@ router.get('/', async (req, res) => {
 
   const httpStatus = status.status === 'ok' ? 200 : 503;
   res.status(httpStatus).json(status);
+});
+
+router.get('/session/:sessionId', async (req, res) => {
+  const stats = await getSessionStats(req.params.sessionId);
+  res.json(stats);
 });
 
 export default router;

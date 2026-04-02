@@ -60,7 +60,7 @@ async function start() {
   console.log('Inicializando base de datos...');
   await initDatabase();
 
-  console.log(`🤖 Verificando Ollama (${process.env.OLLAMA_MODEL})...`);
+  console.log(`Verificando Ollama (${process.env.OLLAMA_MODEL})...`);
   const ollamaOk = await verifyOllama();
   if (!ollamaOk) {
     console.error('No se pudo conectar con Ollama.');
@@ -70,7 +70,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`\nServidor corriendo en http://localhost:${PORT}`);
-    //console.log(`📱 La app móvil debe conectar a: http://<TU_IP_LOCAL>:${PORT}`);
+    //console.log(`Movil: http://<TU_IP_LOCAL>:${PORT}`);
   });
 }
 

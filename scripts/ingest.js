@@ -23,6 +23,7 @@ import path from 'path';
 import { initDatabase } from '../src/services/database.js';
 import { chunkText, extractKeywordsFromChunk } from '../src/services/rag.js';
 import { getDB } from '../src/services/database.js';
+import pdfParse from 'pdf-parse';
 
 const MATERIALS_DIR = './data/materials';
 const VALID_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -46,7 +47,7 @@ async function ingest() {
 
   const files = fs.readdirSync(MATERIALS_DIR).filter(f => {
     const ext = path.extname(f).toLowerCase();
-    return ['.txt', '.md'].includes(ext); // PDF requiere pdf-parse instalado
+    return ['.pdf','.txt', '.md'].includes(ext); // PDF requiere pdf-parse instalado
   });
 
   if (files.length === 0) {
@@ -91,8 +92,18 @@ async function ingest() {
     }
 
     try {
-      const text = fs.readFileSync(filePath, 'utf-8');
-      if (!text.trim()) {
+      let text;
+      const ext = path.extname(file).toLowerCase();
+
+      if (ext === '.pdf') {
+        const buffer = fs.readFileSync(filePath);
+        const parsed = await pdfParse(buffer);
+        text = parsed.text;
+      } else {
+        text = fs.readFileSync(filePath, 'utf-8');
+      }
+
+      if (!text || !text.trim()) {
         console.log(`⚠️  ${file} — vacío, saltando`);
         continue;
       }
