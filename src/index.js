@@ -60,7 +60,7 @@ async function start() {
   console.log('Inicializando base de datos...');
   await initDatabase();
 
-  console.log(`Verificando Ollama (${process.env.OLLAMA_MODEL})...`);
+  console.log(` Verificando Ollama (${process.env.OLLAMA_MODEL})...`);
   const ollamaOk = await verifyOllama();
   if (!ollamaOk) {
     console.error('No se pudo conectar con Ollama.');

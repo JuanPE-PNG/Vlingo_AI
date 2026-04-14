@@ -34,18 +34,17 @@ router.post('/message', async (req, res) => {
     db.prepare("UPDATE sessions SET last_active = datetime('now') WHERE id = ?").run(session.id);
   }
 
-  // Lee historial PREVIO
-  // La ventana es CONTEXT_WINDOW - 1 porque el mensaje actual lo agrega LangChain.
   const dbHistory = db.prepare(`
-    SELECT role, content FROM messages
-    WHERE session_id = ?
-    ORDER BY created_at ASC
-  `).all(session.id);
-
-  // Guardar el mensaje actual en SQLite
+    SELECT role, content FROM (
+      SELECT role, content, created_at FROM messages
+      WHERE session_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    ) ORDER BY created_at ASC
+  `).all(session.id, CONTEXT_WINDOW - 1);
+  
   db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)").run(session.id, message.trim());
 
-  // Contexto RAG
   const ragContext = retrieveContext(message, user.level, 3);
 
   const options = {
@@ -78,11 +77,17 @@ router.post('/message', async (req, res) => {
 
       db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)").run(session.id, response);
 
+      const totalMessages = db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(session.id).c;
+
       res.json({
-        sessionId: session.id,
-        message:   response,
-        userLevel: user.level,
-        historySize: dbHistory.length,
+        sessionId:    session.id,
+        message:      response,
+        userLevel:    user.level,
+        debug: {
+          totalInDB:    totalMessages,
+          sentToModel:  dbHistory.length,
+          windowSize:   CONTEXT_WINDOW,
+        },
       });
     }
   } catch (err) {
