@@ -7,6 +7,24 @@ import { retrieveContext } from '../services/rag.js';
 const router = Router();
 const CONTEXT_WINDOW = parseInt(process.env.CONTEXT_WINDOW) || 10;
 
+// POST /api/chat/new-session
+// Crea una sesión limpia para un usuario. El cliente Android debe llamar este
+// endpoint en cada login para obtener un sessionId fresco y evitar mostrar
+// mensajes de cuentas anteriores.
+router.post('/new-session', (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId requerido' });
+
+  const db = getDB();
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const newId = uuidv4();
+  db.prepare('INSERT INTO sessions (id, user_id, topic) VALUES (?, ?, ?)').run(newId, userId, 'General conversation');
+
+  res.status(201).json({ sessionId: newId });
+});
+
 router.post('/message', async (req, res) => {
   const { userId, message, sessionId: bodySessionId, stream = false } = req.body;
   const sessionId = bodySessionId || req.headers['x-session-id'];

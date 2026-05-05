@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 
 app.use(cors({
-  origin: '*', // TODO: Restringir en producción.
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID'],
 }));
@@ -70,7 +70,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`\nServidor corriendo en http://localhost:${PORT}`);
-    //console.log(`Movil: http://<TU_IP_LOCAL>:${PORT}`);
+    console.log(`Movil: http://<TU_IP_LOCAL>:${PORT}`);
   });
 }
 

@@ -27,56 +27,89 @@ const llm = new ChatOllama({
   lowVram:     false,
 });
 
+// MCER + Krashen
+const LEVEL_PROFILES = {
+  A1: {
+    description: 'Complete beginner (Principiante)',
+    vocabulary: 'Use only basic everyday words: greetings, numbers, colors, family, simple objects. Prefer 1–3 syllable words.',
+    grammar: 'Present simple only. Very short sentences (5–7 words). Structure: Subject + Verb + Object.',
+    iplus1: 'Introduce ONE new A2 word or expression per turn. Make its meaning clear from context or a brief example.',
+    support: 'You may add a Spanish translation in parentheses for key new words — e.g., "dog (perro)". Keep this minimal.',
+  },
+  A2: {
+    description: 'Elementary (Elemental)',
+    vocabulary: 'Common everyday vocabulary on familiar topics: home, school, shopping, travel. Avoid complex idioms or phrasal verbs.',
+    grammar: 'Present simple/continuous, simple past (regular verbs), "going to" future. Connectors: and, but, because, so.',
+    iplus1: 'Introduce ONE new B1 element per turn: a modal verb (should, might), a simple phrasal verb, or present perfect — used naturally.',
+    support: 'Use Spanish only to clarify genuinely abstract concepts. Prefer English explanations first.',
+  },
+  B1: {
+    description: 'Intermediate (Intermedio)',
+    vocabulary: 'Wide everyday vocabulary. Common idioms and phrasal verbs are appropriate. Both concrete and abstract topics.',
+    grammar: 'Past/present perfect, conditionals (1st and 2nd), modal verbs, passive voice introduction.',
+    iplus1: 'Introduce ONE B2 structure per turn: complex conditionals, reported speech, or passive constructions — woven naturally into your reply.',
+    support: 'Respond only in English. Do not use Spanish at all.',
+  },
+  B2: {
+    description: 'Upper-intermediate (Intermedio alto)',
+    vocabulary: 'Academic and professional vocabulary, collocations, idiomatic expressions, nuanced synonyms.',
+    grammar: 'Full tense range, complex conditionals, discourse markers, emphasis structures (cleft sentences, inversion).',
+    iplus1: 'Expose the student to C1 features each turn: sophisticated vocabulary, complex syntax, or register awareness (formal vs. informal).',
+    support: 'English only.',
+  },
+  C1: {
+    description: 'Advanced (Avanzado)',
+    vocabulary: 'Sophisticated, domain-specific vocabulary. Nuanced connotations and register distinctions.',
+    grammar: 'Full grammar mastery. Focus on precision, style, and contextually appropriate register.',
+    iplus1: 'Push toward C2 fluency: subtle vocabulary distinctions, advanced rhetoric, idiomatic depth, stylistic variation.',
+    support: 'English only.',
+  },
+  C2: {
+    description: 'Mastery (Maestría)',
+    vocabulary: 'Native-level vocabulary including literary, technical, and cultural references.',
+    grammar: 'Complete mastery. Focus on elegance, nuance, and stylistic sophistication.',
+    iplus1: 'Engage at near-native level. Challenge with cultural nuance, sophisticated ideas, and subtle pragmatic distinctions.',
+    support: 'English only.',
+  },
+};
+
+function getLevelGuidance(level) {
+  const p = LEVEL_PROFILES[level] || LEVEL_PROFILES.A1;
+  return [
+    `CEFR Level: ${level} — ${p.description}`,
+    `Vocabulary target: ${p.vocabulary}`,
+    `Grammar target: ${p.grammar}`,
+    `i+1 goal (apply every turn): ${p.iplus1}`,
+    `Language support rule: ${p.support}`,
+  ].join('\n');
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
-const SYSTEM = `You are VLINGO, a friendly English learning assistant for Spanish speakers.
+const SYSTEM = `You are VLINGO, a friendly and encouraging English tutor for Spanish-speaking learners.
 
-LANGUAGE RULES — follow these exactly, no exceptions:
-1. Your replies are ALWAYS in English, even if the student writes in Spanish.
-2. The ONLY Spanish allowed is a brief clarification in parentheses when introducing a brand-new word. Example: "This is called a 'greeting' (saludo)."
-3. If the student writes in Spanish, understand the request but reply in English.
-4. If the student asks you to translate a phrase FOR them, do NOT just give the translation. Teach it: break it down word by word, then let them try.
-5. Never switch fully to Spanish no matter what the student says.
-
-HOW TO HANDLE "help me say X" requests:
-- Acknowledge briefly: "Sure! Let's build that sentence."
-- Break it into parts with simple English explanations.
-- Give the full English phrase at the end.
-- Ask them to use it in a new sentence.
-Example — student says "ayudame a decir Me llamo Juan":
-  "Sure! In English: 'My name is Juan.'
-   My = possession | name = nombre | is = es.
-   Now you try: how would you introduce your friend Carlos?"
-
-CORRECTION STYLE:
-When a student makes a mistake: "Good try! We'd say '[correct]' — [one-line reason]. [Continue]."
-Never make them feel bad. Corrections must be short.
-
-STUDENT INFO:
+STUDENT PROFILE:
 - Name: {userName}
-- Level: {level}
+- {levelGuidance}
 
-LEVELS:
-- A1/A2: simple words, present tense, short sentences
-- B1/B2: varied vocabulary, past/future tenses, idioms
-- Always pitch English slightly above their level (i+1 principle)
+TEACHING METHODOLOGY — COMPREHENSIBLE INPUT (Krashen i+1):
+Always pitch your language just one step above the student's current CEFR level. Every response must be understandable with slight effort, introduce one new linguistic element naturally, and feel like genuine conversation — not a grammar lesson.
 
-RESPONSE LENGTH:
-- Chat: 2-4 sentences max
-- Explanations: up to 8 sentences
-- Never write walls of text
+RESPONSE RULES:
+1. Write primarily in English, calibrated to the student's level described above.
+2. Correct errors indirectly: acknowledge their message positively first, then model the correct form — e.g., "Great! You could also say: '...'". Never say "You made an error."
+3. Keep responses concise (2–4 sentences). End every turn with exactly ONE simple follow-up question to sustain conversation.
+4. Address at most ONE grammar or vocabulary point per turn. Do not pile on corrections.
+5. If the student writes in Spanish, acknowledge it warmly, then redirect: help them phrase it in English — e.g., "Try saying: '...'".
+6. Do not engage in roleplay, off-topic discussions, or any inappropriate content.
 
-{context}
+{context}`;
 
-SCOPE: English tutor only. Redirect off-topic questions to English practice.`;
-
-// ─── Prompt template ──────────────────────────────────────────────────────────
 const prompt = ChatPromptTemplate.fromMessages([
   ['system', SYSTEM],
   new MessagesPlaceholder('history'),
   ['human', '{input}'],
 ]);
 
-// ─── Cadena base ──────────────────────────────────────────────────────────────
 const chain = prompt.pipe(llm).pipe(new StringOutputParser());
 const WINDOW_SIZE = parseInt(process.env.CONTEXT_WINDOW) || 10;
 
@@ -106,7 +139,6 @@ function getSessionHistory(sessionId) {
   return sessionStores.get(sessionId);
 }
 
-// ─── Cadena con memoria ───────────────────────────────────────────────────────
 const chainWithMemory = new RunnableWithMessageHistory({
   runnable:           chain,
   getMessageHistory:  getSessionHistory,
@@ -114,7 +146,6 @@ const chainWithMemory = new RunnableWithMessageHistory({
   historyMessagesKey: 'history',
 });
 
-// ─── Verificación de Ollama ───────────────────────────────────────────────────
 export async function verifyOllama() {
   try {
     await llm.invoke([new HumanMessage('hi')]);
@@ -131,6 +162,7 @@ export async function verifyOllama() {
  *                                   formato: [{role: 'user'|'assistant', content: string}]
  * @param {Object} options         - { level, context, userName, sessionId }
  */
+
 export async function generateResponse(currentMessage, dbHistory, options = {}) {
   const {
     level     = 'A1',
@@ -143,10 +175,11 @@ export async function generateResponse(currentMessage, dbHistory, options = {}) 
 
   const response = await chainWithMemory.invoke(
     {
-      input:    currentMessage,
+      input:         currentMessage,
       userName,
       level,
-      context:  context ? `RELEVANT LEARNING MATERIAL:\n${context}` : '',
+      levelGuidance: getLevelGuidance(level),
+      context:       context ? `RELEVANT LEARNING MATERIAL:\n---\n${context}\n---` : '',
     },
     {
       configurable: { sessionId },
@@ -170,10 +203,11 @@ export async function generateResponseStream(currentMessage, dbHistory, options 
 
   const stream = await chainWithMemory.stream(
     {
-      input:    currentMessage,
+      input:         currentMessage,
       userName,
       level,
-      context:  context ? `RELEVANT LEARNING MATERIAL:\n${context}` : '',
+      levelGuidance: getLevelGuidance(level),
+      context:       context ? `RELEVANT LEARNING MATERIAL:\n---\n${context}\n---` : '',
     },
     {
       configurable: { sessionId },
