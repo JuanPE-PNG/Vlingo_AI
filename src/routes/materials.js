@@ -36,9 +36,10 @@ router.post('/ingest', upload.single('file'), async (req, res) => {
       text = fs.readFileSync(filePath, 'utf-8');
 
     } else if (ext === '.pdf') {
-      const pdfParse = (await import('pdf-parse')).default;
+      const { PDFParse } = await import('pdf-parse');
       const buffer = fs.readFileSync(filePath);
-      const data = await pdfParse(buffer);
+      const parser = new PDFParse({ data: buffer });
+      const data = await parser.getText();
       text = data.text;
 
     } else if (ext === '.json') {

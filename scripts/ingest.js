@@ -4,7 +4,7 @@ import path from 'path';
 import { initDatabase } from '../src/services/database.js';
 import { chunkText, extractKeywordsFromChunk } from '../src/services/rag.js';
 import { getDB } from '../src/services/database.js';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 
 const MATERIALS_DIR = './data/materials';
 const VALID_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -74,7 +74,8 @@ async function ingest() {
 
       if (ext === '.pdf') {
         const buffer = fs.readFileSync(filePath);
-        const parsed = await pdfParse(buffer);
+        const parser = new PDFParse({ data: buffer });
+        const parsed = await parser.getText();
         text = parsed.text;
       } else {
         text = fs.readFileSync(filePath, 'utf-8');
