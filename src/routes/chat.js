@@ -26,7 +26,7 @@ router.post('/new-session', (req, res) => {
 });
 
 router.post('/message', async (req, res) => {
-  const { userId, message, sessionId: bodySessionId, stream = false } = req.body;
+  const { userId, message, sessionId: bodySessionId, stream = false, attachedContext } = req.body;
   const sessionId = bodySessionId || req.headers['x-session-id'];
 
   if (!userId || !message?.trim()) {
@@ -63,11 +63,32 @@ router.post('/message', async (req, res) => {
   
   db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)").run(session.id, message.trim());
 
-  const ragContext = retrieveContext(message, user.level, 3);
+  // Cuando el usuario adjunta un curso, ESE es el material principal: saltamos
+  // el RAG para que el modelo pequeño no se confunda con material no relacionado.
+  const MAX_ATTACHED = 8000;
+  const attachedTrimmed = (attachedContext || '').toString().slice(0, MAX_ATTACHED);
+
+  let finalContext = '';
+  if (attachedTrimmed) {
+    finalContext =
+      `>>> PRIMARY SOURCE — THE STUDENT IS ASKING ABOUT THIS SPECIFIC COURSE.\n` +
+      `Base your reply ONLY on the content between the markers. Do NOT invent topics, sections, or examples that are not present.\n` +
+      `=== START OF COURSE ===\n${attachedTrimmed}\n=== END OF COURSE ===`;
+  } else {
+    finalContext = retrieveContext(message, user.level, 3);
+  }
+
+  console.log('[chat] attachedContext recibido:',
+    attachedContext ? `${attachedContext.length} chars` : 'NO');
+  if (attachedTrimmed) {
+    console.log('[chat] attachedContext preview:', attachedTrimmed.slice(0, 300));
+    console.log('[chat] RAG saltado (curso adjunto tiene prioridad)');
+  }
+  console.log('[chat] finalContext total:', finalContext.length, 'chars');
 
   const options = {
     level:     user.level,
-    context:   ragContext,
+    context:   finalContext,
     userName:  user.name,
     sessionId: session.id,
   };

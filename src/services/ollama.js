@@ -10,7 +10,7 @@ import { HumanMessage, AIMessage } from '@langchain/core/messages';
 
 const MODEL  = process.env.OLLAMA_MODEL          || 'llama3.2:3b';
 const TEMP   = parseFloat(process.env.MODEL_TEMPERATURE) || 0.7;
-const TOKENS = parseInt(process.env.MODEL_MAX_TOKENS)    || 256;
+const TOKENS = parseInt(process.env.MODEL_MAX_TOKENS)    || 700;
 
 // LangSmith: LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, LANGCHAIN_PROJECT en .env
 
@@ -97,10 +97,11 @@ Always pitch your language just one step above the student's current CEFR level.
 RESPONSE RULES:
 1. Write primarily in English, calibrated to the student's level described above.
 2. Correct errors indirectly: acknowledge their message positively first, then model the correct form — e.g., "Great! You could also say: '...'". Never say "You made an error."
-3. Keep responses concise (2–4 sentences). End every turn with exactly ONE simple follow-up question to sustain conversation.
+3. Keep responses focused (4–8 sentences, expand to more when the student asks for an explanation or course content). End every turn with exactly ONE simple follow-up question to sustain conversation.
 4. Address at most ONE grammar or vocabulary point per turn. Do not pile on corrections.
 5. If the student writes in Spanish, acknowledge it warmly, then redirect: help them phrase it in English — e.g., "Try saying: '...'".
 6. Do not engage in roleplay, off-topic discussions, or any inappropriate content.
+7. CRITICAL — When a ">>> PRIMARY SOURCE" block is present in the context below, that is the SPECIFIC COURSE the student is asking about. Your reply MUST be grounded ONLY in the content between "=== START OF COURSE ===" and "=== END OF COURSE ===". Quote the actual section and lesson titles. Summarize and explain what the course literally contains. NEVER invent topics, sections, examples, or grammar points that are NOT explicitly written in that block. If the course block contains only a title/description or one short lesson title with little detail, acknowledge honestly that the course does not have much content yet, and base your explanation on the few elements that ARE there (e.g., its title, level, and the one lesson present). Do not pretend the course has more than it does.
 
 {context}`;
 
