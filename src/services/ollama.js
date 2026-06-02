@@ -8,24 +8,22 @@ import { InMemoryChatMessageHistory } from '@langchain/core/chat_history';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 
-const MODEL  = process.env.OLLAMA_MODEL          || 'llama3.2:3b';
-const TEMP   = parseFloat(process.env.MODEL_TEMPERATURE) || 0.7;
+const MODEL  = process.env.OLLAMA_MODEL;
+const TEMP   = parseFloat(process.env.MODEL_TEMPERATURE) || 0.4;
 const TOKENS = parseInt(process.env.MODEL_MAX_TOKENS)    || 700;
-
-// LangSmith: LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, LANGCHAIN_PROJECT en .env
+const NUMCTX = parseInt(process.env.OLLAMA_NUM_CTX)      || 4096;
 
 // ─── Modelo ───────────────────────────────────────────────────────────────────
-const llm = new ChatOllama({
+const llmOptions = {
   baseUrl:     process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
   model:       MODEL,
   temperature: TEMP,
   numPredict:  TOKENS,
-  numGpu:      99,
-  numThread:   4,
-  numCtx:      1024,
-  numBatch:    512,
-  lowVram:     false,
-});
+};
+if (process.env.OLLAMA_NUM_CTX) {
+  llmOptions.numCtx = NUMCTX;
+}
+const llm = new ChatOllama(llmOptions);
 
 // MCER + Krashen
 const LEVEL_PROFILES = {
@@ -228,35 +226,73 @@ export async function generateResponseStream(currentMessage, dbHistory, options 
 
 export async function evaluateText(studentText, exerciseContext, level = 'B1') {
   const evalPrompt = ChatPromptTemplate.fromMessages([
-    ['system', `You are an English teacher. Evaluate the student's writing and reply ONLY with valid JSON, no extra text.
-JSON format:
+    ['system', `You are a strict but fair English grammar evaluator for a Spanish-speaking student at CEFR level {level}.
+
+YOUR ONLY OUTPUT MUST BE A SINGLE VALID JSON OBJECT — no prose, no markdown, no code fences.
+
+JSON SHAPE (all fields required):
 {{
-  "score": <0-100>,
-  "grammar_errors": ["error description"],
-  "corrections": ["corrected sentence"],
-  "positive": "what they did well (in English)",
-  "tip": "one improvement tip in Spanish"
-}}`],
-    ['human', `Level: {level}\nExercise context: {exerciseContext}\nStudent wrote: "{studentText}"`],
+  "score": <integer 0-100>,
+  "grammar_errors": [<string in English, one short error description per real mistake>],
+  "corrections": [<string: the FULL sentence rewritten correctly; if input had no errors, copy the input verbatim>],
+  "positive": <string in English, one short sentence praising something specific>,
+  "tip": <string in Spanish, one short actionable tip; if the sentence is perfect, give a tip about how to vary or enrich it>
+}}
+
+SCORING RULES (apply strictly):
+- 95–100: Sentence is grammatically perfect AND appropriate for level {level}. grammar_errors MUST be []. corrections MUST be the input copied verbatim.
+- 80–94: Minor issues only (one missing article, one capitalization or punctuation slip). Meaning is fully clear.
+- 60–79: One or two clear grammar errors (wrong tense, wrong verb form, wrong preposition) but meaning is recoverable.
+- 40–59: Multiple errors that interfere with meaning.
+- 0–39: Mostly ungrammatical or unintelligible.
+
+HARD CONSTRAINTS:
+1. NEVER invent errors. If the sentence is correct English, score it ≥ 95 and leave grammar_errors empty.
+2. NEVER flag stylistic choices, regional variants (US vs UK), informal contractions, or word-order alternatives as errors.
+3. Adapt severity to the student's CEFR level {level}: do NOT punish an A1 student for not using advanced structures; do NOT reward a B2 student for trivially simple correct sentences (cap at ~90 if the sentence is far below their level).
+4. corrections[0] MUST be a single full sentence — never a list of fragments. It must preserve the student's intended meaning.
+5. The "tip" field MUST be written in Spanish.
+6. Output ONLY the JSON object. No preamble, no explanation, no trailing text.
+
+EXAMPLES:
+
+Input: "She go to school every day."
+Output: {{"score": 70, "grammar_errors": ["Subject-verb agreement: 'She' requires 'goes' in present simple."], "corrections": ["She goes to school every day."], "positive": "Good use of the time expression 'every day'.", "tip": "Recuerda que en presente simple los verbos con he/she/it terminan en -s."}}
+
+Input: "I have lived in Madrid for five years."
+Output: {{"score": 98, "grammar_errors": [], "corrections": ["I have lived in Madrid for five years."], "positive": "Excellent use of the present perfect with 'for' to express duration.", "tip": "Para variar, prueba con 'I've been living in Madrid for five years' (presente perfecto continuo)."}}
+
+Input: "Yesterday I go store and buy milk."
+Output: {{"score": 45, "grammar_errors": ["'go' should be 'went' (past simple).", "Missing article 'the' before 'store'.", "Coordination: should use 'and bought' to keep past tense."], "corrections": ["Yesterday I went to the store and bought milk."], "positive": "Good attempt at telling a past event with two actions.", "tip": "Cuando hablas de algo que ya pasó usa el pasado simple en todos los verbos de la oración."}}`],
+    ['human', `Exercise context: {exerciseContext}\nStudent wrote: "{studentText}"\n\nReturn ONLY the JSON object.`],
   ]);
 
   const evalChain = evalPrompt.pipe(llm).pipe(new StringOutputParser());
 
   const raw = await evalChain.invoke(
     { level, exerciseContext, studentText },
-    { tags: ['vlingo', 'evaluate'] }
+    { tags: ['vlingo', 'evaluate', level] }
   );
 
   try {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    return JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (
+      Array.isArray(parsed.grammar_errors) &&
+      parsed.grammar_errors.length === 0 &&
+      typeof parsed.score === 'number' &&
+      parsed.score < 90
+    ) {
+      parsed.score = 95;
+    }
+    return parsed;
   } catch {
     return {
       score:          70,
       grammar_errors: [],
-      corrections:    [],
+      corrections:    [studentText],
       positive:       'Good effort!',
-      tip:            'Continua practicando.',
+      tip:            'Sigue practicando.',
     };
   }
 }

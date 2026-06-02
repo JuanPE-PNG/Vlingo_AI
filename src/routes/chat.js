@@ -63,8 +63,7 @@ router.post('/message', async (req, res) => {
   
   db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)").run(session.id, message.trim());
 
-  // Cuando el usuario adjunta un curso, ESE es el material principal: saltamos
-  // el RAG para que el modelo pequeño no se confunda con material no relacionado.
+  // Si se adjunta un curso, se salta el rag
   const MAX_ATTACHED = 8000;
   const attachedTrimmed = (attachedContext || '').toString().slice(0, MAX_ATTACHED);
 
