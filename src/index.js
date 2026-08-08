@@ -18,22 +18,48 @@ const PORT = process.env.PORT || 3000;
 
 app.use(helmet());
 
+// Detrás del túnel de Cloudflare hay exactamente un salto (cloudflared → Express).
+app.set('trust proxy', 1);
+
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'x-api-key'],
 }));
 
+// El body se parsea ANTES del rate limit: el limitador necesita leer
+// req.body.userId para contar por usuario y no por IP.
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Al publicar la API por el túnel, todas las peticiones llegan a Express desde
+// 127.0.0.1 (quien conecta es cloudflared, no el teléfono). Con el keyGenerator
+// por defecto los usuarios del piloto compartirían un único cupo y se
+// bloquearían entre sí, así que se cuenta por usuario y, en su defecto, por la
+// IP real que Cloudflare expone en CF-Connecting-IP.
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_PER_MINUTE) || 60,
   message: { error: 'Demasiadas solicitudes. Intenta en un momento.' },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false, // la clave no siempre es una IP; las validaciones de IPv6 no aplican
+  keyGenerator: (req) =>
+    req.body?.userId
+    || req.query?.userId
+    || req.headers['cf-connecting-ip']
+    || req.ip,
 }));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+// El túnel deja la API accesible desde internet. Sin secreto configurado se
+// permite el paso (desarrollo en LAN), pero se avisa fuerte al arrancar.
+const API_KEY = process.env.API_KEY;
+app.use((req, res, next) => {
+  if (!API_KEY) return next();
+  if (req.path === '/health' || req.path.startsWith('/health/')) return next();
+  if (req.headers['x-api-key'] === API_KEY) return next();
+  res.status(401).json({ error: 'No autorizado' });
+});
 
 // Rutas
 app.use('/health', healthRoutes);
@@ -68,9 +94,15 @@ async function start() {
   }
   console.log('Ollama conectado');
 
+  if (!API_KEY) {
+    console.warn('\n  ADVERTENCIA: API_KEY no está definida en .env.');
+    console.warn('  La API queda ABIERTA. No levantes el túnel sin configurarla.');
+  }
+
   app.listen(PORT, () => {
     console.log(`\nServidor corriendo en http://localhost:${PORT}`);
     console.log(`Movil: http://<TU_IP_LOCAL>:${PORT}`);
+    console.log(`Tunel: npm run tunnel (en otra terminal)`);
   });
 }
 

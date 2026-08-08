@@ -16,12 +16,13 @@ router.get('/', async (req, res) => {
     ollama: 'unknown',
   };
 
-  try {
-    const models = await verifyOllama();
-    const modelLoaded = models.models.some(m => m.name.startsWith(MODEL.split(':')[0]));
-    status.ollama = modelLoaded ? 'ready' : 'model_not_found';
-    status.available_models = models.models.map(m => m.name);
-  } catch {
+  // verifyOllama() devuelve un boolean (hace un invoke de prueba al modelo),
+  // no la lista de modelos: tratarlo como objeto dejaba el health en 'offline'
+  // permanente aunque Ollama estuviera corriendo.
+  const ollamaOk = await verifyOllama();
+  if (ollamaOk) {
+    status.ollama = 'ready';
+  } else {
     status.ollama = 'offline';
     status.status = 'degraded';
   }

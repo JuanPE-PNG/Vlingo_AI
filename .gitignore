@@ -4,3 +4,5 @@ data/materials/*.pdf
 data/materials/*.tmp
 *.log
 .env
+
+scripts/app_config.sql

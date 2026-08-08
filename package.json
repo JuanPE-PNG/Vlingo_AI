@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "ingest": "node scripts/ingest.js",
+    "tunnel": "node scripts/tunnel.js",
     "pull-model": "ollama pull llama3.2:3b",
     "setup": "npm install && npm run pull-model"
   },

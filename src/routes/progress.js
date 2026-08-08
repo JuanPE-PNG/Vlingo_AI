@@ -19,9 +19,6 @@ router.post('/user', (req, res) => {
   if (email) {
     const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
     if (existing) {
-      // El nivel real vive en Supabase (test de nivelación). Si cambió allá,
-      // sincronizarlo aquí: es el que alimenta los perfiles CEFR del prompt
-      // y el filtro por nivel del RAG.
       if (existing.level !== level) {
         db.prepare("UPDATE users SET level = ?, updated_at = datetime('now') WHERE id = ?")
           .run(level, existing.id);
