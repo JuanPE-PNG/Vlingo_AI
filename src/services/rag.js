@@ -15,7 +15,6 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
 
   const levelGroup = getLevelGroup(level);
 
-  const placeholders = keywords.map(() => '?').join(', ');
   const keywordConditions = keywords.map(() => `(content LIKE ? OR keywords LIKE ?)`).join(' OR ');
   const keywordParams = keywords.flatMap(k => [`%${k}%`, `%${k}%`]);
 
@@ -30,7 +29,7 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
                CASE WHEN level = ? THEN 2 ELSE 0 END
              ) as score
       FROM materials
-      WHERE (${keywordConditions} OR level IN (${levelGroup.map(() => '?').join(',')}))
+      WHERE (${keywordConditions}) AND level IN (${levelGroup.map(() => '?').join(',')})
       ORDER BY score DESC
       LIMIT ?
     `);
@@ -46,20 +45,10 @@ export function retrieveContext(query, level = 'A1', topK = 3) {
 
     results = stmt.all(...params);
   } catch {
-    try {
-      const simple = db.prepare(`
-        SELECT content, keywords, level, category
-        FROM materials
-        WHERE level IN (${levelGroup.map(() => '?').join(',')})
-        ORDER BY RANDOM()
-        LIMIT ?
-      `);
-      results = simple.all(...levelGroup, topK);
-    } catch {
-      return '';
-    }
+    return '';
   }
 
+  results = results.filter(r => r.score >= 3);
   if (results.length === 0) return '';
 
   const top = results.slice(0, topK);
@@ -81,6 +70,7 @@ function extractKeywords(text) {
     'como', 'que', 'es', 'en', 'el', 'la', 'los', 'las', 'un', 'una',
     'de', 'del', 'al', 'se', 'me', 'te', 'le', 'nos', 'y', 'o', 'pero',
     'si', 'por', 'para', 'con', 'sin', 'sobre', 'entre', 'quiero', 'puedo',
+    'explain', 'explica', 'explicame', 'difference', 'diferencia', 'cuando', 'usa', 'use',
   ]);
 
   return text
