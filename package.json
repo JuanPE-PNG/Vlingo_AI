@@ -11,6 +11,7 @@
     "tunnel": "node scripts/tunnel.js",
     "pull-model": "ollama pull qwen2.5:3b-instruct",
     "probar:prompts": "node scripts/probar-prompts.js",
+    "test:eval": "node tests/evaluation/run_eval.js",
     "setup": "npm install && npm run pull-model"
   },
   "dependencies": {

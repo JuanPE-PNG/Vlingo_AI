@@ -58,13 +58,15 @@ function levelRules(level) {
 
 // Reglas por modo
 const STUDENT_TASKS = {
-  conversation: `CONVERSATION. Answer naturally at the student's level. If there is an error, model the correct form once ("Nice! We say: ..."); fix at most ONE error. If the student writes in Spanish, answer briefly and show how to say their message in English ("En inglés: ..."). End with ONE short question in English.`,
+  conversation: `CONVERSATION. Answer naturally at the student's level and react to what they said. If there is an error, model the correct form once ("Nice! We say: ..."); fix at most ONE error. End with ONE short question in English that moves the conversation forward; do not repeat questions you already asked.`,
+
+  conversationSpanish: `CONVERSATION (the student wrote in Spanish). Answer briefly, then show how to say their message in English ("En inglés: ..."). End with ONE short question in English.`,
 
   grammar: `GRAMMAR OR VOCABULARY QUESTION about ENGLISH. Explain the English rule or word (never Spanish grammar) in the explanation language of the level. Then give 2-3 correct English example sentences; for A1-A2 add the Spanish translation in parentheses after each one. You may end with one tiny practice sentence for the student to complete. You may be a bit longer than the usual length.`,
 
   translation: `TRANSLATION. Give the English phrase, one natural alternative, and one line on when to use it. Keep it short.`,
 
-  roleplay: `ROLEPLAY PRACTICE. Only educational everyday situations are allowed: restaurant, shopping, travel, airport, hotel, directions, doctor, school, job interview, phone call, meeting people. Start right away in character, speaking ENGLISH even if the student wrote in Spanish: YOU play the service or authority role (waiter, receptionist, interviewer, doctor, shop assistant) and YOU ask the questions; the student is the customer, candidate or patient. Greet them and ask the first question. Stay in character and keep each turn short and at the student's level. If the student made an error, add a last line "Tip: ..." with the correction. If no situation is chosen yet, propose two and let the student pick. If the student asks for a romantic, sexual, violent or otherwise non-educational roleplay, kindly decline and offer an educational situation. If the student says stop, leave the role and praise their practice.`,
+  roleplay: `ROLEPLAY PRACTICE. Only educational everyday situations are allowed: restaurant, shopping, travel, airport, hotel, directions, doctor, school, job interview, phone call, meeting people. Start right away in character, speaking ENGLISH even if the student wrote in Spanish: YOU play the service or authority role (waiter, receptionist, interviewer, doctor, shop assistant) and YOU ask the questions; the student is the customer, candidate or patient. Greet them and ask the first question. Speak ONLY as that character, in first person (as a waiter: "Good evening! Here is the menu. What would you like to drink?"). Never describe what the character might say and never coach the student while in character. Stay in character and keep each turn short and at the student's level. If the student made an error, add a last line "Tip: ..." with the correction. If no situation is chosen yet, propose two and let the student pick. If the student asks for a romantic, sexual, violent or otherwise non-educational roleplay, kindly decline and offer an educational situation. If the student says stop, leave the role and praise their practice.`,
 
   course: `COURSE EXPLANATION. Explain the course below as a tutor: what the student will learn, the key points, and 1-2 examples taken from the course. Use the explanation language of the level. You may be longer than the usual length. Do not add anything that is not in the course. End by asking which part they want to practice.`,
 
@@ -73,7 +75,7 @@ const STUDENT_TASKS = {
 
 const STUDENT_SYSTEM = `You are VLINGO, a warm English tutor inside a mobile app for Spanish-speaking learners.
 Student name: {userName}
-
+{memory}
 LEVEL RULES
 {levelRules}
 
@@ -87,6 +89,7 @@ ALWAYS
 - Plain text only: no markdown, no asterisks, no tables, no headings. Short paragraphs; simple numbered lines are fine.
 - Write ONLY your own reply. Never write lines for the student and never use labels like "Student:" or "You:".
 - Do not greet or say the student's name in every message; greet only at the start of a conversation.
+- Vary your words. Never repeat a sentence or question you already wrote in this chat.
 {context}`;
 
 // Modo docente (profesores y administradores)
@@ -102,7 +105,7 @@ ABOUT VLINGO
 - Courses: course > sections > lessons. Lesson blocks: text, list, exercise (question + answer).
 - Question types: multiple choice, complete the sentence, pronunciation (speech recognition), listening (uploaded audio).
 - Students earn XP per section, skill points (reading, writing, listening, speaking), streaks and achievements.
-
+{memory}
 TASK FOR THIS MESSAGE
 {task}
 
@@ -154,13 +157,40 @@ export function detectMode(message, history = [], hasCourse = false) {
   return 'conversation';
 }
 
+const SPANISH_HINTS = new Set([
+  'el', 'la', 'los', 'las', 'que', 'qué', 'de', 'y', 'en', 'por', 'para', 'con', 'una', 'un',
+  'es', 'como', 'cómo', 'pero', 'mi', 'tu', 'yo', 'muy', 'del', 'al', 'se', 'lo', 'me', 'estoy',
+  'tengo', 'quiero', 'hola', 'gracias', 'sí', 'más', 'porque', 'cuando', 'hoy', 'ayer', 'soy',
+]);
+const ENGLISH_HINTS = new Set([
+  'i', 'you', 'he', 'she', 'it', 'we', 'they', 'is', 'am', 'are', 'was', 'were', 'the', 'a',
+  'an', 'to', 'and', 'my', 'your', 'have', 'has', 'do', 'does', 'did', 'like', 'want', 'go',
+  'in', 'on', 'at', 'of', 'for', 'with', 'this', 'that', 'can', 'will', 'yesterday', 'today',
+]);
+
+export function isMostlyEnglish(text) {
+  const w = (text || '').toLowerCase().match(/[a-záéíóúüñ']+/g) || [];
+  if (w.length < 3) return false;
+  const en = w.filter(x => ENGLISH_HINTS.has(x)).length;
+  const es = w.filter(x => SPANISH_HINTS.has(x)).length;
+  return en > es;
+}
+
+function isMostlySpanish(text) {
+  const w = (text || '').toLowerCase().match(/[a-záéíóúüñ']+/g) || [];
+  const en = w.filter(x => ENGLISH_HINTS.has(x)).length;
+  const es = w.filter(x => SPANISH_HINTS.has(x)).length;
+  return es > en || /[¿¡]/.test(text || '');
+}
+
 export function isTeacher(level, userRole) {
   if (userRole) return userRole === 'profesor' || userRole === 'administrador';
   // La app asigna C2 a profesores y administradores (el test de nivelación llega hasta B2).
   return level === 'C2';
 }
 
-export function buildSystemPrompt({ level, userRole, userName, mode, course, reference }) {
+export function buildSystemPrompt({ level, userRole, userName, mode, course, reference, memory = '', message = '' }) {
+  if (mode === 'conversation' && isMostlySpanish(message)) mode = 'conversationSpanish';
   const teacher = isTeacher(level, userRole);
   let context = '';
   if (course) context = courseBlock(course);
@@ -170,7 +200,7 @@ export function buildSystemPrompt({ level, userRole, userName, mode, course, ref
     return {
       teacher,
       template:  TEACHER_SYSTEM,
-      variables: { userName, task: course ? TEACHER_TASKS.course : TEACHER_TASKS.general, context },
+      variables: { userName, memory, task: course ? TEACHER_TASKS.course : TEACHER_TASKS.general, context },
     };
   }
 
@@ -179,6 +209,7 @@ export function buildSystemPrompt({ level, userRole, userName, mode, course, ref
     template:  STUDENT_SYSTEM,
     variables: {
       userName,
+      memory,
       levelRules: levelRules(STUDENT_LEVELS.includes(level) ? level : 'A1'),
       task:       STUDENT_TASKS[mode] || STUDENT_TASKS.conversation,
       context,

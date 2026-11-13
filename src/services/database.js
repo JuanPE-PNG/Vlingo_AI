@@ -90,12 +90,41 @@ export async function initDatabase() {
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Memoria del asistente: datos que el usuario contó de sí mismo
+    CREATE TABLE IF NOT EXISTS user_memory (
+      user_id     TEXT NOT NULL REFERENCES users(id),
+      key         TEXT NOT NULL,
+      value       TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, key)
+    );
+
+    -- Errores gramaticales reales detectados en lo que escribe el usuario
+    CREATE TABLE IF NOT EXISTS user_errors (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT NOT NULL REFERENCES users(id),
+      category    TEXT NOT NULL,
+      wrong       TEXT NOT NULL,
+      correct     TEXT NOT NULL,
+      count       INTEGER NOT NULL DEFAULT 1,
+      last_seen   TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, category, wrong)
+    );
+
     -- Índices para búsqueda rápida
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_progress_user ON user_progress(user_id);
     CREATE INDEX IF NOT EXISTS idx_materials_level ON materials(level);
     CREATE INDEX IF NOT EXISTS idx_materials_category ON materials(category);
   `);
+
+  const sessionCols = db.prepare('PRAGMA table_info(sessions)').all().map(c => c.name);
+  if (!sessionCols.includes('summary')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN summary TEXT');
+  }
+  if (!sessionCols.includes('summarized_until')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN summarized_until INTEGER NOT NULL DEFAULT 0');
+  }
 
   seedLessons();
 

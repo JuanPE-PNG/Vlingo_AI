@@ -3,10 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB } from '../services/database.js';
 import { generateResponse, generateResponseStream, evaluateText, clearSessionMemory } from '../services/ollama.js';
 import { retrieveContext } from '../services/rag.js';
-import { detectMode } from '../services/prompts.js';
+import { detectMode, isTeacher } from '../services/prompts.js';
+import {
+  getSessionContext, buildMemoryBlock, scheduleMemoryUpdate, scheduleErrorTracking,
+} from '../services/memory.js';
 
 const router = Router();
-const CONTEXT_WINDOW = parseInt(process.env.CONTEXT_WINDOW) || 10;
 // ~1400 tokens: el curso debe caber junto al prompt en num_ctx 4096.
 const MAX_ATTACHED   = 5000;
 const VALID_ROLES    = ['estudiante', 'profesor', 'administrador'];
@@ -56,14 +58,8 @@ router.post('/message', async (req, res) => {
     db.prepare("UPDATE sessions SET last_active = datetime('now') WHERE id = ?").run(session.id);
   }
 
-  const dbHistory = db.prepare(`
-    SELECT role, content FROM (
-      SELECT role, content, created_at FROM messages
-      WHERE session_id = ?
-      ORDER BY created_at DESC
-      LIMIT ?
-    ) ORDER BY created_at ASC
-  `).all(session.id, CONTEXT_WINDOW - 1);
+  // Historial sin límite fijo: resumen acumulado de la sesión + mensajes recientes sin resumir.
+  const { summary, recent: dbHistory } = getSessionContext(session.id);
 
   db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)").run(session.id, message.trim());
 
@@ -77,15 +73,24 @@ router.post('/message', async (req, res) => {
 
   console.log(`[chat] modo=${mode} curso=${course.length} chars referencia=${reference.length} chars`);
 
+  const role    = VALID_ROLES.includes(userRole) ? userRole : undefined;
+  const teacher = isTeacher(user.level, role);
+  const memory  = buildMemoryBlock({ userId, summary, teacher });
+
   const options = {
     level:     user.level,
-    userRole:  VALID_ROLES.includes(userRole) ? userRole : undefined,
+    userRole:  role,
     userName:  user.name,
     sessionId: session.id,
     mode,
     course,
     reference,
+    memory,
   };
+
+  const afterReply = () => scheduleMemoryUpdate({
+    userId, sessionId: session.id, message: message.trim(), teacher,
+  });
 
   try {
     if (stream) {
@@ -104,11 +109,14 @@ router.post('/message', async (req, res) => {
       db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)").run(session.id, fullResponse);
       res.write(`data: ${JSON.stringify({ done: true, sessionId: session.id })}\n\n`);
       res.end();
+      afterReply();
 
     } else {
       const { text: response } = await generateResponse(message.trim(), dbHistory, options);
 
       db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)").run(session.id, response);
+
+      afterReply();
 
       const totalMessages = db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(session.id).c;
 
@@ -120,7 +128,8 @@ router.post('/message', async (req, res) => {
           mode,
           totalInDB:    totalMessages,
           sentToModel:  dbHistory.length,
-          windowSize:   CONTEXT_WINDOW,
+          hasSummary:   Boolean(summary),
+          memoryChars:  memory.length,
         },
       });
     }
@@ -193,6 +202,10 @@ router.post('/evaluate', async (req, res) => {
       VALID_ROLES.includes(userRole) ? userRole : 'estudiante',
     );
     res.json(evaluation);
+
+    if (evaluation.grammar_errors.length && evaluation.corrections[0] !== text) {
+      scheduleErrorTracking({ userId, text });
+    }
   } catch (err) {
     res.status(503).json({ error: 'Error al evaluar', detail: err.message });
   }

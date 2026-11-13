@@ -5,4 +5,6 @@ data/materials/*.tmp
 *.log
 .env
 
+tests/evaluation/results.json
+
 scripts/app_config.sql

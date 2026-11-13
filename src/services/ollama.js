@@ -104,14 +104,18 @@ async function buildHistory(sessionId, dbHistory) {
       await history.addMessage(new AIMessage(m.content));
     }
   }
-  // Registrar en el map para que la cadena lo encuentre por sessionId
   sessionStores.set(sessionId, history);
   return history;
 }
 
-// El modelo 3B a veces ignora "plain text": se limpia el markdown que la app mostraría literal.
+const STUDENT_LINE = /^\s*(you|student|estudiante|customer|cliente|candidate|patient)\s*:/im;
+const OWN_LABEL    = /^\s*(me|tutor|vlingo|assistant|waiter|mesero|receptionist|interviewer|doctor|shop assistant|seller|clerk)\s*:\s*/gim;
+
 function toPlainText(text) {
+  const cut = text.search(STUDENT_LINE);
+  if (cut > 0) text = text.slice(0, cut);
   return text
+    .replace(OWN_LABEL, '')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/__(.+?)__/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
@@ -128,14 +132,15 @@ async function prepareTurn(currentMessage, dbHistory, options) {
     sessionId = 'default',
     course    = '',
     reference = '',
+    memory    = '',
   } = options;
   const mode = options.mode || detectMode(currentMessage, dbHistory, Boolean(course));
 
   const { teacher, template, variables } = buildSystemPrompt({
-    level, userRole, userName, mode, course, reference,
+    level, userRole, userName, mode, course, reference, memory, message: currentMessage,
   });
 
-  const contextChars  = course.length + reference.length;
+  const contextChars  = course.length + reference.length + memory.length;
   const historyBudget = Math.max(
     MIN_HISTORY_CHARS,
     INPUT_CHAR_BUDGET - contextChars - currentMessage.length,
@@ -166,13 +171,6 @@ export async function verifyOllama() {
   }
 }
 
-/**
- * @param {string} currentMessage  - texto del mensaje actual del usuario
- * @param {Array}  dbHistory       - historial PREVIO de SQLite ya recortado a WINDOW_SIZE-1
- *                                   formato: [{role: 'user'|'assistant', content: string}]
- * @param {Object} options         - { level, userRole, userName, sessionId, mode, course, reference }
- * @returns {Promise<{text: string, mode: string}>}
- */
 export async function generateResponse(currentMessage, dbHistory, options = {}) {
   const { mode, chain, input, config } = await prepareTurn(currentMessage, dbHistory, options);
   const raw = await chain.invoke(input, { ...config, tags: [...config.tags, 'chat'] });
