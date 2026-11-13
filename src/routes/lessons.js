@@ -75,21 +75,17 @@ router.post('/:id/explain', async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
-  const lessonContent = JSON.parse(lesson.content);
-
-  const prompt = `The student is studying the lesson "${lesson.title}" (${lesson.level}).
-Lesson content summary: ${JSON.stringify(lessonContent).slice(0, 500)}
-
-The student asks you to explain: "${concept || lesson.title}"
-
-Provide a clear, friendly explanation adapted to level ${user.level}.
-Use examples. Keep it under 150 words. Respond in Spanish if the student's question is in Spanish.`;
+  const lessonContent = JSON.stringify(JSON.parse(lesson.content)).slice(0, 1500);
+  const message = `Explain "${concept || lesson.title}" from the lesson "${lesson.title}" (${lesson.level}).`;
 
   try {
-    const explanation = await generateResponse(
-      [{ role: 'user', content: prompt }],
-      { level: user.level, userName: user.name }
-    );
+    const { text: explanation } = await generateResponse(message, [], {
+      level:     user.level,
+      userName:  user.name,
+      sessionId: `lesson-explain-${userId}`,
+      mode:      'grammar',
+      reference: lessonContent,
+    });
 
     res.json({ explanation, lessonId: lesson.id, concept });
   } catch (err) {
@@ -116,19 +112,15 @@ router.post('/:id/hint', async (req, res) => {
 
   if (!exercise) return res.status(404).json({ error: 'Ejercicio no encontrado' });
 
-  const prompt = `Student is doing this exercise:
-Type: ${exercise.type}
-Prompt: "${exercise.prompt}"
-${studentAnswer ? `Student's answer so far: "${studentAnswer}"` : ''}
-
-Give a helpful HINT (not the answer!) that guides them. 
-Keep it to 1-2 sentences. Be encouraging. Respond in Spanish.`;
+  const message = `I am doing this exercise (${exercise.type}): "${exercise.prompt}".${
+    studentAnswer ? ` My answer so far: "${studentAnswer}".` : ''} Can you give me a hint?`;
 
   try {
-    const hint = await generateResponse(
-      [{ role: 'user', content: prompt }],
-      { level: user?.level || 'A1' }
-    );
+    const { text: hint } = await generateResponse(message, [], {
+      level:     user?.level || 'A1',
+      sessionId: `lesson-hint-${userId}`,
+      mode:      'hint',
+    });
     res.json({ hint });
   } catch (err) {
     res.status(503).json({ error: 'Error al generar pista', detail: err.message });

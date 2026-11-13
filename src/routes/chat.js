@@ -3,9 +3,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB } from '../services/database.js';
 import { generateResponse, generateResponseStream, evaluateText, clearSessionMemory } from '../services/ollama.js';
 import { retrieveContext } from '../services/rag.js';
+import { detectMode, isTeacher } from '../services/prompts.js';
+import {
+  getSessionContext, buildMemoryBlock, scheduleMemoryUpdate, scheduleErrorTracking,
+} from '../services/memory.js';
 
 const router = Router();
-const CONTEXT_WINDOW = parseInt(process.env.CONTEXT_WINDOW) || 10;
+// ~1400 tokens: el curso debe caber junto al prompt en num_ctx 4096.
+const MAX_ATTACHED   = 5000;
+const VALID_ROLES    = ['estudiante', 'profesor', 'administrador'];
 
 // POST /api/chat/new-session
 // Crea una sesión limpia para un usuario. El cliente Android debe llamar este
@@ -26,7 +32,7 @@ router.post('/new-session', (req, res) => {
 });
 
 router.post('/message', async (req, res) => {
-  const { userId, message, sessionId: bodySessionId, stream = false, attachedContext } = req.body;
+  const { userId, message, sessionId: bodySessionId, stream = false, attachedContext, userRole } = req.body;
   const sessionId = bodySessionId || req.headers['x-session-id'];
 
   if (!userId || !message?.trim()) {
@@ -52,45 +58,39 @@ router.post('/message', async (req, res) => {
     db.prepare("UPDATE sessions SET last_active = datetime('now') WHERE id = ?").run(session.id);
   }
 
-  const dbHistory = db.prepare(`
-    SELECT role, content FROM (
-      SELECT role, content, created_at FROM messages
-      WHERE session_id = ?
-      ORDER BY created_at DESC
-      LIMIT ?
-    ) ORDER BY created_at ASC
-  `).all(session.id, CONTEXT_WINDOW - 1);
-  
+  // Historial sin límite fijo: resumen acumulado de la sesión + mensajes recientes sin resumir.
+  const { summary, recent: dbHistory } = getSessionContext(session.id);
+
   db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)").run(session.id, message.trim());
 
-  // Si se adjunta un curso, se salta el rag
-  const MAX_ATTACHED = 8000;
-  const attachedTrimmed = (attachedContext || '').toString().slice(0, MAX_ATTACHED);
+  // El curso adjunto tiene prioridad; el material de los PDF solo se usa para explicar gramática.
+  const attached = (attachedContext || '').toString().trim();
+  const course = attached.length > MAX_ATTACHED
+    ? attached.slice(0, MAX_ATTACHED) + '\n[... curso recortado ...]'
+    : attached;
+  const mode = detectMode(message, dbHistory, Boolean(course));
+  const reference = mode === 'grammar' ? retrieveContext(message, user.level, 2) : '';
 
-  let finalContext = '';
-  if (attachedTrimmed) {
-    finalContext =
-      `>>> PRIMARY SOURCE — THE STUDENT IS ASKING ABOUT THIS SPECIFIC COURSE.\n` +
-      `Base your reply ONLY on the content between the markers. Do NOT invent topics, sections, or examples that are not present.\n` +
-      `=== START OF COURSE ===\n${attachedTrimmed}\n=== END OF COURSE ===`;
-  } else {
-    finalContext = retrieveContext(message, user.level, 3);
-  }
+  console.log(`[chat] modo=${mode} curso=${course.length} chars referencia=${reference.length} chars`);
 
-  console.log('[chat] attachedContext recibido:',
-    attachedContext ? `${attachedContext.length} chars` : 'NO');
-  if (attachedTrimmed) {
-    console.log('[chat] attachedContext preview:', attachedTrimmed.slice(0, 300));
-    console.log('[chat] RAG saltado (curso adjunto tiene prioridad)');
-  }
-  console.log('[chat] finalContext total:', finalContext.length, 'chars');
+  const role    = VALID_ROLES.includes(userRole) ? userRole : undefined;
+  const teacher = isTeacher(user.level, role);
+  const memory  = buildMemoryBlock({ userId, summary, teacher });
 
   const options = {
     level:     user.level,
-    context:   finalContext,
+    userRole:  role,
     userName:  user.name,
     sessionId: session.id,
+    mode,
+    course,
+    reference,
+    memory,
   };
+
+  const afterReply = () => scheduleMemoryUpdate({
+    userId, sessionId: session.id, message: message.trim(), teacher,
+  });
 
   try {
     if (stream) {
@@ -109,11 +109,14 @@ router.post('/message', async (req, res) => {
       db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)").run(session.id, fullResponse);
       res.write(`data: ${JSON.stringify({ done: true, sessionId: session.id })}\n\n`);
       res.end();
+      afterReply();
 
     } else {
-      const response = await generateResponse(message.trim(), dbHistory, options);
+      const { text: response } = await generateResponse(message.trim(), dbHistory, options);
 
       db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)").run(session.id, response);
+
+      afterReply();
 
       const totalMessages = db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(session.id).c;
 
@@ -122,9 +125,11 @@ router.post('/message', async (req, res) => {
         message:      response,
         userLevel:    user.level,
         debug: {
+          mode,
           totalInDB:    totalMessages,
           sentToModel:  dbHistory.length,
-          windowSize:   CONTEXT_WINDOW,
+          hasSummary:   Boolean(summary),
+          memoryChars:  memory.length,
         },
       });
     }
@@ -182,7 +187,7 @@ router.delete('/sessions/:sessionId', (req, res) => {
 
 // POST /api/chat/evaluate
 router.post('/evaluate', async (req, res) => {
-  const { userId, text, exerciseContext } = req.body;
+  const { userId, text, exerciseContext, userRole } = req.body;
   if (!userId || !text) return res.status(400).json({ error: 'userId y text son requeridos' });
 
   const db   = getDB();
@@ -190,8 +195,17 @@ router.post('/evaluate', async (req, res) => {
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
   try {
-    const evaluation = await evaluateText(text, exerciseContext || 'Free writing', user.level);
+    const evaluation = await evaluateText(
+      text,
+      exerciseContext || 'Free writing',
+      user.level,
+      VALID_ROLES.includes(userRole) ? userRole : 'estudiante',
+    );
     res.json(evaluation);
+
+    if (evaluation.grammar_errors.length && evaluation.corrections[0] !== text) {
+      scheduleErrorTracking({ userId, text });
+    }
   } catch (err) {
     res.status(503).json({ error: 'Error al evaluar', detail: err.message });
   }
